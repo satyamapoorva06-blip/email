@@ -150,7 +150,8 @@ client/
                       # ConnectedAccounts · ClientsRoster · Activity · Settings · Help
       client/         # ClientHome · ClientReview · ClientAllMail
       Landing · Login · Register · RoleSelect · AssistantConnect
-scripts/smoke.mjs     # jsdom smoke-render of every route (npm i --no-save jsdom)
+scripts/smoke.mjs     # jsdom smoke-render of every route (node scripts/smoke.mjs)
+scripts/pg-dump.mjs   # regenerate seed SQL for hosted Postgres from server/seed.js
 ```
 
 ### API surface (all JSON, all scoped to the caller)
@@ -245,5 +246,5 @@ SQLite demo database at any time.
 
 Simple, explicit, commented where the logic is non-obvious. No hidden magic:
 one axios instance, one fetch wrapper per AI path, tiny reusable components,
-and a single `db.js` seam. The smoke suite (`node scripts/smoke.mjs` with
-`npm i --no-save jsdom`) render-checks every route under a mocked API.
+and a single `db.js` seam. The smoke suite (`node scripts/smoke.mjs`) render-checks every route under a
+mocked API (jsdom is a dev dependency).
