@@ -187,11 +187,48 @@ with `mode='real'`.
 
 ## Deployment
 
-The app is a single Node process: `npm install && npm run build && npm start`.
-Deploy to any Node host (Render, Railway, Fly.io) with a persistent disk mounted
-at `data/` (or set your own `DATA` dir in `server/db.js`). Vercel works for the
-static client, but the Express API needs a Node runtime; do not deploy the API
-to serverless functions as-is — SQLite on ephemeral filesystems will lose data.
+**As configured: Vercel (static client + serverless API) + Supabase (Postgres).**
+
+- Vercel project `relay-email-assistant` (team `satyamapoorva06-blips-projects`) — linked to
+  `satyamapoorva06-blip/email`, builds `client/dist` (`npm run build`), serves `api/[...slug].js`
+  (the same Express app, never listens) for all `/api/*` traffic; `vercel.json` rewrites
+  everything else to the SPA bundle.
+- Supabase project `relay-email-assistant` (ref `jbmeyrisolxcsdmxykcx`, region `ap-south-1`) —
+  schema applied via migration `relay_schema` (11 tables + indexes; **RLS enabled on every
+  table**, no policies → only the server-side service path can read/write; the anon key
+  cannot). Demo dataset (28 conversations, 34 messages, 6 meetings) loaded 2026-11-15.
+- `DATABASE_URL` (sensitive env var on Vercel, production + preview) points at the Supabase
+  **transaction pooler**, port 6543 — serverless-safe. `postgres.js` runs with
+  `prepare: false` as required by PgBouncer.
+
+One manual step for the **first** deployment: Vercel requires `projectSettings` on a new
+project's first deployment, which the automation bridge cannot supply. Open
+<https://vercel.com/satyamapoorva06-blips-projects/relay-email-assistant> → **Create Deployment**
+→ pick branch `arena/3ff46f48-email` → **Deploy**. Everything else is already configured
+(Git link, build command `npm run build`, output `client/dist`, install `npm install`,
+env var, Node 22+ runtime for `api/[...slug].js`). Subsequent deploys can be triggered the
+same way or by promoting any preview deployment.
+
+Afterwards, verify: `GET /api/health` should report `{"ok":true,"db":"postgres","reachable":true}`.
+If `reachable` is `false`, the pooler shard hostname is off for this project — swap the
+`aws-0-ap-south-1` part of `DATABASE_URL` to `aws-1-ap-south-1` (Project → Settings → Environment
+Variables), then redeploy. If the site shows a Vercel login wall, disable Vercel
+Deployment Protection for production (Project → Settings → Deployment Protection) or attach
+a custom domain.
+
+**Always works, zero config:** any Node host with a persistent disk —
+`npm install && npm run build && npm start` (Render/Railway/Fly/Docker). The app then uses
+the embedded SQLite file at `data/relay.db` (auto-created and seeded on first boot).
+
+`pglite://memory` as `DATABASE_URL` runs the full app on an in-process WASM Postgres for
+local E2E testing of the Postgres code path (`npm i --no-save @electric-sql/pglite`).
+
+### Redeploying the database
+
+Schema changes ship as Supabase migrations (see migration `relay_schema`). The demo dataset
+is reproducible: `node scripts/pg-dump.mjs > seed.sql` regenerates the seed from
+`server/seed.js`, applicable with any SQL client. `npm run seed --force` rebuilds the local
+SQLite demo database at any time.
 
 ## Security notes
 
