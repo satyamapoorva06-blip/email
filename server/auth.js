@@ -17,15 +17,15 @@ export function verifyPassword(password, stored) {
 
 const SESSION_DAYS = 30;
 
-export function createSession(userId) {
+export async function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5).toISOString();
-  run('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)', token, userId, nowIso(), expires);
+  await run('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)', token, userId, nowIso(), expires);
   return token;
 }
 
-export function destroySession(token) {
-  run('DELETE FROM sessions WHERE token = ?', token);
+export async function destroySession(token) {
+  await run('DELETE FROM sessions WHERE token = ?', token);
 }
 
 export function publicUser(u) {
@@ -35,24 +35,24 @@ export function publicUser(u) {
 
 // Requires a valid Bearer token. Attaches req.user and req.clientIds
 // (the client records this user may see).
-export function authRequired(req, res, next) {
+export async function authRequired(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Not signed in.' });
-  const row = get('SELECT * FROM sessions WHERE token = ?', token);
+  const row = await get('SELECT * FROM sessions WHERE token = ?', token);
   if (!row) return res.status(401).json({ error: 'Session expired — please sign in again.' });
   if (new Date(row.expires_at) < new Date()) {
-    destroySession(token);
+    await destroySession(token);
     return res.status(401).json({ error: 'Session expired — please sign in again.' });
   }
-  const user = get('SELECT * FROM users WHERE id = ?', row.user_id);
+  const user = await get('SELECT * FROM users WHERE id = ?', row.user_id);
   if (!user) return res.status(401).json({ error: 'Account not found.' });
   req.user = user;
   req.token = token;
   if (user.role === 'assistant') {
-    req.clientIds = all('SELECT id FROM clients WHERE assistant_id = ?', user.id).map((r) => r.id);
+    req.clientIds = (await all('SELECT id FROM clients WHERE assistant_id = ?', user.id)).map((r) => r.id);
   } else if (user.role === 'client') {
-    const row2 = get('SELECT id FROM clients WHERE user_id = ?', user.id);
+    const row2 = await get('SELECT id FROM clients WHERE user_id = ?', user.id);
     req.clientIds = row2 ? [row2.id] : [];
   } else {
     req.clientIds = [];

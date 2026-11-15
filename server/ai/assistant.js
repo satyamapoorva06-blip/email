@@ -5,42 +5,42 @@ import { all, get } from '../db.js';
 import { llmAvailable, llmChat } from './llm.js';
 import { classifyConversation, draftReply } from './classify.js';
 
-function ownedClientIds(user) {
+async function ownedClientIds(user) {
   if (user.role === 'client') {
-    const row = get('SELECT id FROM clients WHERE user_id = ?', user.id);
+    const row = await get('SELECT id FROM clients WHERE user_id = ?', user.id);
     return row ? [row.id] : [];
   }
-  return all('SELECT id FROM clients WHERE assistant_id = ?', user.id).map((r) => r.id);
+  return (await all('SELECT id FROM clients WHERE assistant_id = ?', user.id)).map((r) => r.id);
 }
 
-function scopeFilter(user, clientId) {
+async function scopeFilter(user, clientId) {
   // Returns { clause, params } constraining client_id for this user.
-  const owned = ownedClientIds(user);
+  const owned = await ownedClientIds(user);
   if (clientId && owned.includes(clientId)) return { clause: 'client_id = ?', params: [clientId] };
   if (owned.length === 0) return { clause: '1 = 0', params: [] };
   return { clause: `client_id IN (${owned.map(() => '?').join(',')})`, params: owned };
 }
 
-function snapshot(user, clientId) {
-  const { clause, params } = scopeFilter(user, clientId);
+async function snapshot(user, clientId) {
+  const { clause, params } = await scopeFilter(user, clientId);
   const open = `status = 'open' AND ${clause}`;
-  const attention = all(
+  const attention = await all(
     `SELECT id, subject, classification, confidence, importance FROM conversations
      WHERE ${open} AND (classification = 'client' OR needs_review = 1 OR approval_status = 'pending')
      ORDER BY importance = 'high' DESC, last_activity_at DESC LIMIT 8`, ...params);
-  const unread = all(
+  const unread = await all(
     `SELECT id, subject, classification FROM conversations WHERE ${open} AND is_read = 0 ORDER BY last_activity_at DESC LIMIT 8`, ...params);
-  const unreadCount = get(`SELECT COUNT(*) AS n FROM conversations WHERE ${open} AND is_read = 0`, ...params).n;
-  const waiting = all(
+  const unreadCount = (await get(`SELECT COUNT(*) AS n FROM conversations WHERE ${open} AND is_read = 0`, ...params)).n;
+  const waiting = await all(
     `SELECT id, subject, waiting_since FROM conversations WHERE ${open} AND waiting_since IS NOT NULL ORDER BY waiting_since ASC LIMIT 8`, ...params);
-  const important = all(
+  const important = await all(
     `SELECT id, subject FROM conversations WHERE ${open} AND (importance = 'high' OR is_starred = 1) ORDER BY last_activity_at DESC LIMIT 8`, ...params);
   const since = new Date(); since.setDate(since.getDate() - 1);
   const weekEnd = new Date(); weekEnd.setDate(weekEnd.getDate() + 7);
-  const meetings = all(
+  const meetings = await all(
     `SELECT title, start_at, location FROM meetings WHERE ${clause} AND start_at >= ? AND start_at <= ? ORDER BY start_at ASC LIMIT 6`,
     ...params, since.toISOString(), weekEnd.toISOString());
-  const counts = get(`SELECT COUNT(*) AS total,
+  const counts = await get(`SELECT COUNT(*) AS total,
       SUM(CASE WHEN classification='assistant' THEN 1 ELSE 0 END) AS a,
       SUM(CASE WHEN classification='client' THEN 1 ELSE 0 END) AS c,
       SUM(CASE WHEN classification='none' THEN 1 ELSE 0 END) AS n
@@ -78,23 +78,23 @@ function deterministicAnswer(q, snap) {
 }
 
 export async function answerQuestion(question, { user, clientId = null, conversationId = null }) {
-  const snap = snapshot(user, clientId);
+  const snap = await snapshot(user, clientId);
 
   // Conversation-scoped questions
   if (conversationId) {
-    const convo = get('SELECT * FROM conversations WHERE id = ?', conversationId);
+    const convo = await get('SELECT * FROM conversations WHERE id = ?', conversationId);
     if (convo) {
-      const messages = all('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC', conversationId);
+      const messages = await all('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC', conversationId);
       if (/why/i.test(question)) {
         return { engine: 'data', answer: `AI classification: ${convo.classification === 'assistant' ? 'Assistant to reply' : convo.classification === 'client' ? 'Client to reply' : 'No reply needed'} (confidence ${Math.round(convo.confidence * 100)}%).\n\nWhy: ${convo.reason || 'No explanation recorded.'}\n\nSuggested next action: ${convo.suggested_action || 'Review manually.'}${convo.needs_review ? '\n\nNote: confidence is low, so this was flagged for human review.' : ''}` };
       }
       if (/draft|reply/i.test(question)) {
-        const client = get('SELECT * FROM clients WHERE id = ?', convo.client_id);
+        const client = await get('SELECT * FROM clients WHERE id = ?', convo.client_id);
         const out = await draftReply({ subject: convo.subject, messages, clientName: client?.name || 'the client', assistantName: user.name });
         return { engine: out.engine, answer: `Here’s a draft you can review and edit (never sent automatically):\n\n${out.text}` };
       }
       if (/reclassif|re-check|reconsider/i.test(question)) {
-        const client = get('SELECT * FROM clients WHERE id = ?', convo.client_id);
+        const client = await get('SELECT * FROM clients WHERE id = ?', convo.client_id);
         const out = await classifyConversation({ subject: convo.subject, messages, clientName: client?.name || 'the client' });
         return { engine: out.engine, answer: `Re-checked against the latest history → ${out.classification === 'assistant' ? 'Assistant to reply' : out.classification === 'client' ? 'Client to reply' : 'No reply needed'} (${Math.round(out.confidence * 100)}%).\n${out.reason}\n\nUse the “Re-analyze” button in the AI panel to apply this.` };
       }

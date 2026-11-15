@@ -1,16 +1,16 @@
 // Seed script — realistic demo data for the two demo clients.
 // Runs automatically on first start (when the DB is empty), or with --force.
 // Timestamps are generated relative to "now" so the demo always feels alive.
-import { db, get, run, nowIso } from './db.js';
+import { exec, get, run, nowIso } from './db.js';
 import { hashPassword } from './auth.js';
 
 const FORCE = process.argv.includes('--force');
-const ALREADY = get('SELECT COUNT(*) AS n FROM users').n > 0;
+const ALREADY = (await get('SELECT COUNT(*) AS n FROM users')).n > 0;
 if (ALREADY && !FORCE) {
   console.log('[seed] database already seeded — skipping (run `npm run seed` to rebuild)');
 } else {
 if (FORCE) {
-  db.exec(`DELETE FROM attachments; DELETE FROM messages; DELETE FROM notifications; DELETE FROM activity_log;
+  await exec(`DELETE FROM attachments; DELETE FROM messages; DELETE FROM notifications; DELETE FROM activity_log;
            DELETE FROM meetings; DELETE FROM conversations; DELETE FROM connected_accounts; DELETE FROM settings;
            DELETE FROM clients; DELETE FROM sessions; DELETE FROM users;`);
 }
@@ -22,45 +22,45 @@ const at = (daysFromNow, hour, minute = 0) => { const d = new Date(); d.setDate(
 
 // ---------------------------------------------------------------- users
 const assistantPw = 'demo1234';
-const priya = run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
+const priya = await run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
   'Priya Sharma', 'priya@relay.app', hashPassword(assistantPw), 'assistant', '#4F46E5', nowIso());
 const priyaId = Number(priya.lastInsertRowid);
 
-const rahul = run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
+const rahul = await run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
   'Rahul Mehta', 'rahul@meridianventures.com', hashPassword('demo1234'), 'client', '#0F766E', nowIso());
 const rahulId = Number(rahul.lastInsertRowid);
 
-const anita = run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
+const anita = await run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
   'Anita Desai', 'anita@loomandco.com', hashPassword('demo1234'), 'client', '#B45309', nowIso());
 const anitaId = Number(anita.lastInsertRowid);
 
-run('INSERT INTO settings (user_id, signature, timezone) VALUES (?,?,?)', priyaId, 'Warm regards,\nPriya Sharma\nExecutive Personal Assistant to Rahul & Anita', 'Asia/Kolkata');
-run('INSERT INTO settings (user_id) VALUES (?)', rahulId);
-run('INSERT INTO settings (user_id) VALUES (?)', anitaId);
+await run('INSERT INTO settings (user_id, signature, timezone) VALUES (?,?,?)', priyaId, 'Warm regards,\nPriya Sharma\nExecutive Personal Assistant to Rahul & Anita', 'Asia/Kolkata');
+await run('INSERT INTO settings (user_id) VALUES (?)', rahulId);
+await run('INSERT INTO settings (user_id) VALUES (?)', anitaId);
 
 // ---------------------------------------------------------------- clients
-const meridian = run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
+const meridian = await run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
   priyaId, rahulId, 'Rahul Mehta', 'Meridian Ventures', 'rahul@meridianventures.com', 'Managing Partner', '#0F766E', nowIso());
 const meridianId = Number(meridian.lastInsertRowid);
 
-const loom = run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
+const loom = await run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
   priyaId, anitaId, 'Anita Desai', 'Loom & Co.', 'anita@loomandco.com', 'Founder & CEO', '#B45309', nowIso());
 const loomId = Number(loom.lastInsertRowid);
 
 // ----------------------------------------------------- connected accounts (simulated)
-const acct = (clientId, provider, email, syncedHoursAgo) =>
-  run('INSERT INTO connected_accounts (client_id, provider, email, status, mode, last_synced_at, created_at) VALUES (?,?,?,?,?,?,?)',
+const acct = async (clientId, provider, email, syncedHoursAgo) =>
+  await run('INSERT INTO connected_accounts (client_id, provider, email, status, mode, last_synced_at, created_at) VALUES (?,?,?,?,?,?,?)',
     clientId, provider, email, 'connected', 'simulated', hoursAgo(syncedHoursAgo), nowIso());
-acct(meridianId, 'gmail', 'rahul.mehta@meridianventures.com', 0.2);
-acct(meridianId, 'outlook', 'rahul@meridianventures.com', 2);
-acct(loomId, 'gmail', 'anita@loomandco.com', 0.1);
-acct(loomId, 'outlook', 'anita@loomandco.com', 26);
+await acct(meridianId, 'gmail', 'rahul.mehta@meridianventures.com', 0.2);
+await acct(meridianId, 'outlook', 'rahul@meridianventures.com', 2);
+await acct(loomId, 'gmail', 'anita@loomandco.com', 0.1);
+await acct(loomId, 'outlook', 'anita@loomandco.com', 26);
 
 // ------------------------------------------------------------ conversation seed helper
-function addConversation(c) {
+async function addConversation(c) {
   const createdIso = hoursAgo(c.created_hours_ago ?? 48);
   const lastActivity = iso(Math.max(...c.messages.map((m) => now - (m.hours_ago ?? 0) * 3600e3)));
-  const out = run(`INSERT INTO conversations
+  const out = await run(`INSERT INTO conversations
     (client_id, subject, classification, confidence, summary, reason, suggested_action, needs_review,
      status, is_read, is_starred, importance, approval_status, approval_note, waiting_since, last_activity_at, created_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -74,11 +74,11 @@ function addConversation(c) {
     lastActivity, createdIso);
   const convoId = Number(out.lastInsertRowid);
   for (const m of c.messages) {
-    const msg = run('INSERT INTO messages (conversation_id, sender_name, sender_email, body, direction, created_at) VALUES (?,?,?,?,?,?)',
+    const msg = await run('INSERT INTO messages (conversation_id, sender_name, sender_email, body, direction, created_at) VALUES (?,?,?,?,?,?)',
       convoId, m.from[0], m.from[1], m.body.trim(), m.dir, hoursAgo(m.hours_ago ?? 0));
     const msgId = Number(msg.lastInsertRowid);
     for (const a of m.attachments || []) {
-      run('INSERT INTO attachments (message_id, filename, size_bytes, kind) VALUES (?,?,?,?)', msgId, a.filename, a.size, a.kind || 'file');
+      await run('INSERT INTO attachments (message_id, filename, size_bytes, kind) VALUES (?,?,?,?)', msgId, a.filename, a.size, a.kind || 'file');
     }
   }
   return convoId;
@@ -86,7 +86,7 @@ function addConversation(c) {
 
 console.log('[seed] inserting demo conversations…');
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 50,
   subject: 'Project Halcyon — revised term sheet for sign-off',
   classification: 'client', confidence: 0.93, needs_review: false, is_read: false, is_starred: true, importance: 'high', approval_status: 'pending',
@@ -100,7 +100,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 30,
   subject: 'Confirm whether we should proceed with the Arclight partnership',
   classification: 'client', confidence: 0.88, is_read: false, importance: 'high', approval_status: 'pending',
@@ -112,7 +112,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 60,
   subject: 'Catering for the board dinner — 27th',
   classification: 'assistant', confidence: 0.91, is_read: true, importance: 'normal',
@@ -127,7 +127,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 20,
   subject: 'Invoice INV-2041 — diligence fees ₹18.4L',
   classification: 'client', confidence: 0.58, needs_review: true, is_read: false, importance: 'high',
@@ -140,7 +140,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 78,
   subject: 'Your Figma invoice — payment received',
   classification: 'none', confidence: 0.97, is_read: true, importance: 'normal',
@@ -152,7 +152,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 12,
   subject: 'The Daily Byte — Markets open mixed, Fed holds',
   classification: 'none', confidence: 0.95, is_read: false, importance: 'low',
@@ -164,7 +164,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 26,
   subject: 'Ops review Thursday — two of you are double-booked',
   classification: 'assistant', confidence: 0.9, is_read: true, importance: 'normal',
@@ -178,7 +178,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 100,
   subject: 'Q3 investor update — final draft for your sign-off',
   classification: 'client', confidence: 0.86, is_read: true, importance: 'high', is_starred: true, approval_status: 'none',
@@ -191,7 +191,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 15,
   subject: 'Mumbai ↔ Bengaluru, 18–20 Nov — seat and hotel preferences',
   classification: 'assistant', confidence: 0.9, is_read: false, importance: 'normal',
@@ -203,7 +203,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 40,
   subject: 'LinkedIn: 3 new notifications',
   classification: 'none', confidence: 0.96, is_read: true, importance: 'low',
@@ -215,7 +215,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 120,
   subject: 'Following up: vendor scorecard comments',
   classification: 'assistant', confidence: 0.82, is_read: true, importance: 'normal',
@@ -229,7 +229,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 200,
   subject: 'NDA counter: 2-year term instead of 3?',
   classification: 'client', confidence: 0.84, is_read: true, importance: 'normal', approval_status: 'approved',
@@ -243,7 +243,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 52,
   subject: 'Security alert: sign-in from a new device',
   classification: 'none', confidence: 0.93, is_read: true, importance: 'high',
@@ -255,7 +255,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 28,
   subject: 'Diwali edit launch — your go/no-go',
   classification: 'client', confidence: 0.91, is_read: false, is_starred: true, importance: 'high', approval_status: 'pending',
@@ -267,7 +267,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 44,
   subject: 'Casa Verde partnership — go / no-go before Monday',
   classification: 'client', confidence: 0.89, is_read: false, importance: 'high', approval_status: 'pending',
@@ -280,7 +280,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 70,
   subject: 'Influencer contract — scope changes for Ananya S',
   classification: 'client', confidence: 0.8, is_read: false, importance: 'normal', approval_status: 'none',
@@ -293,7 +293,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 30,
   subject: 'Loom & Co. — weekly metrics digest',
   classification: 'none', confidence: 0.97, is_read: true, importance: 'low',
@@ -305,7 +305,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 9,
   subject: 'Your BlueTokai order has shipped',
   classification: 'none', confidence: 0.94, is_read: false, importance: 'low',
@@ -317,7 +317,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 18,
   subject: 'Head of Design — interview loop scheduling',
   classification: 'assistant', confidence: 0.93, is_read: false, importance: 'normal',
@@ -329,7 +329,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 36,
   subject: 'Studio shoot Saturday — call sheet',
   classification: 'assistant', confidence: 0.88, is_read: true, importance: 'normal',
@@ -344,7 +344,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 52,
   subject: 'Zoom invites updated (2)',
   classification: 'none', confidence: 0.92, is_read: true, importance: 'low',
@@ -356,7 +356,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 16,
   subject: 'PO #LM-118 — single-origin coffee supply, ₹2,40,000',
   classification: 'client', confidence: 0.52, needs_review: true, is_read: false, importance: 'normal',
@@ -369,7 +369,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 11,
   subject: 'Packaging mock feedback — 10 minutes this week?',
   classification: 'assistant', confidence: 0.68, is_read: false, importance: 'normal',
@@ -381,7 +381,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 26,
   subject: 'Retail Weekly — “quiet luxury” inventory moves',
   classification: 'none', confidence: 0.9, is_read: false, importance: 'low',
@@ -394,7 +394,7 @@ addConversation({
 });
 
 // ---------------- completed / archived threads (variety + history)
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 220,
   subject: 'Term sheet v1 — annotated copy back to you',
   classification: 'assistant', confidence: 0.85, status: 'completed', is_read: true, importance: 'normal',
@@ -406,7 +406,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 150,
   subject: 'Q2 milestone — thank you note to the team',
   classification: 'assistant', confidence: 0.94, status: 'completed', is_read: true, importance: 'low',
@@ -418,7 +418,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'meridian', created_hours_ago: 300,
   subject: 'Offsite venue shortlist — Pawna Lake vs. Soma Vine Village',
   classification: 'assistant', confidence: 0.87, status: 'archived', is_read: true, importance: 'normal',
@@ -430,7 +430,7 @@ addConversation({
   ],
 });
 
-addConversation({
+await addConversation({
   client: 'loom', created_hours_ago: 260,
   subject: 'Growth marketing teardown (last week)',
   classification: 'none', confidence: 0.88, status: 'archived', is_read: true, importance: 'low',
@@ -443,39 +443,39 @@ addConversation({
 });
 
 // ------------------------------------------------------------ meetings
-const mtg = (clientId, convoIdx, title, start, end, location, attendees, source) =>
-  run('INSERT INTO meetings (client_id, conversation_id, title, start_at, end_at, location, attendees, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+const mtg = async (clientId, convoIdx, title, start, end, location, attendees, source) =>
+  await run('INSERT INTO meetings (client_id, conversation_id, title, start_at, end_at, location, attendees, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
     clientId, convoIdx, title, start, end, location, attendees, source, nowIso());
-const convoIdBySubject = (s) => get('SELECT id FROM conversations WHERE subject = ?', s)?.id || null;
+const convoIdBySubject = async (s) => (await get('SELECT id FROM conversations WHERE subject = ?', s))?.id || null;
 
-mtg(meridianId, convoIdBySubject('Catering for the board dinner — 27th'), 'Board dinner — Rahul’s welcome address', at(12, 19, 30), at(12, 22, 0), 'The Oberoi, Grand Ballroom', 'Rahul Mehta, Board of Directors, Priya Sharma', 'extracted');
-mtg(loomId, convoIdBySubject('Head of Design — interview loop scheduling'), 'Head of Design — portfolio round: Arjun', at(2, 10, 0), at(2, 11, 0), 'Loom & Co. — Studio 4, Video Meet', 'Anita Desai, Arjun Malhotra, Sneha Iyer', 'extracted');
-mtg(loomId, convoIdBySubject('Head of Design — interview loop scheduling'), 'Head of Design — craft round: Kavya', at(3, 11, 30), at(3, 12, 15), 'Loom & Co. — Studio 2', 'Design team, Kavya Nair', 'extracted');
-mtg(meridianId, convoIdBySubject('Ops review Thursday — two of you are double-booked'), 'Ops review (moved to Friday 10:30)', at(4, 10, 30), at(4, 11, 15), 'Google Meet', 'Rahul Mehta, Neha Kapoor, Krish', 'extracted');
-mtg(loomId, convoIdBySubject('Casa Verde partnership — go / no-go before Monday'), 'Casa Verde × Loom — intro call', at(5, 16, 0), at(5, 16, 45), 'Video Meet', 'Anita Desai, Isabela Fontaine', 'extracted');
-mtg(meridianId, null, 'Aspire fund quarterly catch-up', at(-6, 17, 0), at(-6, 17, 45), 'Rahul’s office', 'Rahul Mehta', 'manual');
+await mtg(meridianId, await convoIdBySubject('Catering for the board dinner — 27th'), 'Board dinner — Rahul’s welcome address', at(12, 19, 30), at(12, 22, 0), 'The Oberoi, Grand Ballroom', 'Rahul Mehta, Board of Directors, Priya Sharma', 'extracted');
+await mtg(loomId, await convoIdBySubject('Head of Design — interview loop scheduling'), 'Head of Design — portfolio round: Arjun', at(2, 10, 0), at(2, 11, 0), 'Loom & Co. — Studio 4, Video Meet', 'Anita Desai, Arjun Malhotra, Sneha Iyer', 'extracted');
+await mtg(loomId, await convoIdBySubject('Head of Design — interview loop scheduling'), 'Head of Design — craft round: Kavya', at(3, 11, 30), at(3, 12, 15), 'Loom & Co. — Studio 2', 'Design team, Kavya Nair', 'extracted');
+await mtg(meridianId, await convoIdBySubject('Ops review Thursday — two of you are double-booked'), 'Ops review (moved to Friday 10:30)', at(4, 10, 30), at(4, 11, 15), 'Google Meet', 'Rahul Mehta, Neha Kapoor, Krish', 'extracted');
+await mtg(loomId, await convoIdBySubject('Casa Verde partnership — go / no-go before Monday'), 'Casa Verde × Loom — intro call', at(5, 16, 0), at(5, 16, 45), 'Video Meet', 'Anita Desai, Isabela Fontaine', 'extracted');
+await mtg(meridianId, null, 'Aspire fund quarterly catch-up', at(-6, 17, 0), at(-6, 17, 45), 'Rahul’s office', 'Rahul Mehta', 'manual');
 
 // ------------------------------------------------------------ activity timeline
-const act = (clientId, role, action, detail, hoursAgo_) =>
-  run('INSERT INTO activity_log (client_id, actor_role, action, detail, created_at) VALUES (?,?,?,?,?)', clientId, role, action, detail, hoursAgo(hoursAgo_));
+const act = async (clientId, role, action, detail, hoursAgo_) =>
+  await run('INSERT INTO activity_log (client_id, actor_role, action, detail, created_at) VALUES (?,?,?,?,?)', clientId, role, action, detail, hoursAgo(hoursAgo_));
 
-act(meridianId, 'system', 'account_connected', 'Simulated Gmail connection for rahul.mehta@meridianventures.com (demo mode — no real credentials).', 24 * 14);
-act(loomId, 'system', 'account_connected', 'Simulated Gmail connection for anita@loomandco.com (demo mode — no real credentials).', 24 * 13);
-act(meridianId, 'ai', 'classified', 'AI classified “Project Halcyon — revised term sheet” as Client to reply (93% confidence).', 46);
-act(meridianId, 'ai', 'classified', 'AI classified “Invoice INV-2041” for human review (58% confidence — ambiguous signal).', 19);
-act(meridianId, 'assistant', 'sent_reply', 'Priya sent a reply on Rahul Mehta’s behalf in “Catering for the board dinner — 27th”.', 30);
-act(loomId, 'client', 'asked_assistant', 'Anita asked the assistant to handle “Head of Design — interview loop scheduling”.', 72);
-act(loomId, 'ai', 'meeting_extracted', 'Extracted “Head of Design — portfolio round” from the interview loop thread.', 5);
-act(meridianId, 'client', 'handled', 'Rahul marked “Q2 milestone — thank-you note to the team” as handled.', 24 * 5);
-act(loomId, 'assistant', 'reclassified', 'Priya reclassified “Packaging mock feedback” as Assistant to reply.', 10);
-act(meridianId, 'ai', 'classified', 'AI classified “Confirm whether we should proceed with the Arclight partnership” as Client to reply (88%).', 26);
+await act(meridianId, 'system', 'account_connected', 'Simulated Gmail connection for rahul.mehta@meridianventures.com (demo mode — no real credentials).', 24 * 14);
+await act(loomId, 'system', 'account_connected', 'Simulated Gmail connection for anita@loomandco.com (demo mode — no real credentials).', 24 * 13);
+await act(meridianId, 'ai', 'classified', 'AI classified “Project Halcyon — revised term sheet” as Client to reply (93% confidence).', 46);
+await act(meridianId, 'ai', 'classified', 'AI classified “Invoice INV-2041” for human review (58% confidence — ambiguous signal).', 19);
+await act(meridianId, 'assistant', 'sent_reply', 'Priya sent a reply on Rahul Mehta’s behalf in “Catering for the board dinner — 27th”.', 30);
+await act(loomId, 'client', 'asked_assistant', 'Anita asked the assistant to handle “Head of Design — interview loop scheduling”.', 72);
+await act(loomId, 'ai', 'meeting_extracted', 'Extracted “Head of Design — portfolio round” from the interview loop thread.', 5);
+await act(meridianId, 'client', 'handled', 'Rahul marked “Q2 milestone — thank-you note to the team” as handled.', 24 * 5);
+await act(loomId, 'assistant', 'reclassified', 'Priya reclassified “Packaging mock feedback” as Assistant to reply.', 10);
+await act(meridianId, 'ai', 'classified', 'AI classified “Confirm whether we should proceed with the Arclight partnership” as Client to reply (88%).', 26);
 
 // ------------------------------------------------------------ notifications for Priya
-const note = (title, body, read, hoursAgo_) =>
-  run('INSERT INTO notifications (user_id, title, body, read, created_at) VALUES (?,?,?,?,?)', priyaId, title, body, read ? 1 : 0, hoursAgo(hoursAgo_));
-note('Approval pending — Casa Verde × Loom', 'Isabela needs Anita’s go/no-go by Monday. The term sheet is attached to the thread.', false, 3);
-note('Follow-up due — vendor scorecard', 'Anjali has not commented on the scorecard; Monday’s selection meeting depends on it.', false, 7);
-note('Rahul marked an item as handled', '“Q2 milestone — thank-you note to the team” was completed by the client.', true, 24 * 5);
+const note = async (title, body, read, hoursAgo_) =>
+  await run('INSERT INTO notifications (user_id, title, body, read, created_at) VALUES (?,?,?,?,?)', priyaId, title, body, read ? 1 : 0, hoursAgo(hoursAgo_));
+await note('Approval pending — Casa Verde × Loom', 'Isabela needs Anita’s go/no-go by Monday. The term sheet is attached to the thread.', false, 3);
+await note('Follow-up due — vendor scorecard', 'Anjali has not commented on the scorecard; Monday’s selection meeting depends on it.', false, 7);
+await note('Rahul marked an item as handled', '“Q2 milestone — thank-you note to the team” was completed by the client.', true, 24 * 5);
 
 // ------------------------------------------------------------ demo credential summary
 console.log('[seed] done. Demo accounts:');
