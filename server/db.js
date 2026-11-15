@@ -214,8 +214,11 @@ async function makeSqliteBackend() {
 
 async function makePostgresBackend(url) {
   const { default: postgres } = await import('postgres');
+  // NOTE: no I/O here. The constructor is lazy, and schema DDL must never run
+  // at module import — a failed cold-start would take down EVERY route with a
+  // platform 500. The schema lives in migrations (see README / Supabase
+  // migration `relay_schema`); the pooler is reached lazily on first query.
   const sql = postgres(url, { prepare: false, max: 3, connect_timeout: 15, idle_timeout: 20 });
-  await sql.unsafe(PG_DDL);
   const query = async (text, params) => sql.unsafe(translate(text), params ?? []);
   return {
     all: async (text, params) => normalize([...(await query(text, params))]),

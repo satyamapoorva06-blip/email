@@ -18,7 +18,21 @@ api.interceptors.response.use(
       localStorage.removeItem('relay_user');
       window.location.assign('/login');
     }
-    const message = err.response?.data?.error || err.message || 'Something went wrong';
+    // Defensive: never surface "[object Object]" — pull a human string out of
+    // whatever shape the error arrived in (server {error}, axios, or platform JSON).
+    const data = err.response?.data;
+    let message = 'Something went wrong';
+    if (data && typeof data === 'object') {
+      const e = data.error ?? data.message ?? data.detail ?? data.title;
+      message = typeof e === 'string' && e.trim() ? e
+        : e && typeof e === 'object' ? (e.message || e.reason || JSON.stringify(e)).slice(0, 300)
+        : JSON.stringify(data).slice(0, 300);
+    } else if (typeof data === 'string' && data.trim()) {
+      // HTML error pages (e.g. an SSO wall) are not useful — collapse them.
+      message = data.trim().startsWith('<') ? 'The service returned an unexpected page. Are you signed in?' : data.slice(0, 300);
+    } else if (err.message) {
+      message = err.message;
+    }
     return Promise.reject(new Error(message));
   }
 );
