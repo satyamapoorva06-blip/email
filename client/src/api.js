@@ -28,8 +28,8 @@ api.interceptors.response.use(
         : e && typeof e === 'object' ? (e.message || e.reason || JSON.stringify(e)).slice(0, 300)
         : JSON.stringify(data).slice(0, 300);
     } else if (typeof data === 'string' && data.trim()) {
-      // HTML error pages (e.g. an SSO wall) are not useful — collapse them.
-      message = data.trim().startsWith('<') ? 'The service returned an unexpected page. Are you signed in?' : data.slice(0, 300);
+      // HTML error pages (e.g. an SSO wall or platform 500) are not useful — collapse them.
+      message = data.trim().startsWith('<') ? `The service returned an unexpected page (HTTP ${status ?? '???'}).` : data.slice(0, 300);
     } else if (err.message) {
       message = err.message;
     }
