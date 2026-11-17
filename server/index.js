@@ -48,6 +48,41 @@ app.get('/api/health', async (_req, res) => {
   }
   res.json({ ok: true, ai: process.env.OPENAI_API_KEY ? 'llm' : 'fallback', db: process.env.DATABASE_URL ? 'postgres' : 'sqlite', reachable });
 });
+
+// TEMPORARY diagnostic for a live-login 500. Gated by DEBUG_TOKEN env var.
+// Remove this route (and the DEBUG_TOKEN env var) once the issue is fixed.
+app.get('/api/debug/login', async (req, res) => {
+  if (!process.env.DEBUG_TOKEN || req.query.key !== process.env.DEBUG_TOKEN) {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  const out = { node: process.version, steps: [] };
+  // Env-var shape only — never the password.
+  try {
+    const u = new URL(process.env.DATABASE_URL || '');
+    out.db = { protocol: u.protocol, host: u.hostname, port: u.port, user: u.username, database: u.pathname.slice(1), params: [...u.searchParams.keys()], sslmode: u.searchParams.get('sslmode') || null };
+  } catch {
+    out.db = 'unparseable DATABASE_URL';
+  }
+  try {
+    const { get, run } = await import('./db.js');
+    const one = await get('SELECT 1 AS one');
+    out.steps.push({ step: 'select-1', ok: true, one: one?.one ?? null });
+    const email = String(req.query.email || 'priya@relay.app').trim().toLowerCase();
+    const user = await get('SELECT id, email, role FROM users WHERE email = ?', email);
+    out.steps.push({ step: 'users-select', ok: true, found: !!user, user: user || null });
+    if (user) {
+      const token = 'debug' + Date.now();
+      await run('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)', token, user.id, new Date().toISOString(), new Date(Date.now() + 60e3).toISOString());
+      out.steps.push({ step: 'session-insert', ok: true });
+      await run('DELETE FROM sessions WHERE token = ?', token);
+      out.steps.push({ step: 'session-delete', ok: true });
+    }
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    out.steps.push({ step: 'failed', ok: false, message: String(err?.message || err), code: err?.code || null, detail: err?.detail || null, where: err?.where || null });
+    res.json({ ok: false, ...out });
+  }
+});
 app.use('/api/auth', authRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/client', clientRoutes);
