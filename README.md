@@ -191,9 +191,13 @@ with `mode='real'`.
 **As configured: Vercel (static client + serverless API) + Supabase (Postgres).**
 
 - Vercel project `relay-email-assistant` (team `satyamapoorva06-blips-projects`) — linked to
-  `satyamapoorva06-blip/email`, builds `client/dist` (`npm run build`), serves `api/[...slug].js`
-  (the same Express app, never listens) for all `/api/*` traffic; `vercel.json` rewrites
-  everything else to the SPA bundle.
+  `satyamapoorva06-blip/email`. `vercel.json` uses explicit **v2 builds** because the
+  zero-config `api/` detection did NOT produce a Serverless Function under the Vite
+  framework preset (every `/api/*` fell through to a platform 404 while the SPA kept
+  serving). The v2 config builds `@vercel/static-build` (`npm run build` → `client/dist`)
+  and `@vercel/node` (`api/[...slug].js`, the same Express app, never listens) and routes
+  `/api/*` to the function, static assets from the filesystem, and everything else to the
+  SPA bundle. Do not reintroduce `outputDirectory`/`framework` overrides that bypass this.
 - Supabase project `relay-email-assistant` (ref `jbmeyrisolxcsdmxykcx`, region `ap-south-1`) —
   schema applied via migration `relay_schema` (11 tables + indexes; **RLS enabled on every
   table**, no policies → only the server-side service path can read/write; the anon key
@@ -201,14 +205,15 @@ with `mode='real'`.
 - `DATABASE_URL` (sensitive env var on Vercel, production + preview) points at the Supabase
   **transaction pooler**, port 6543 — serverless-safe. `postgres.js` runs with
   `prepare: false` as required by PgBouncer.
+- Import-time work: the Postgres backend applies **no** DDL at module import (a failed
+  cold-start would take down every route). The schema is owned by migrations; the
+  connection is opened lazily on first query.
 
-One manual step for the **first** deployment: Vercel requires `projectSettings` on a new
-project's first deployment, which the automation bridge cannot supply. Open
-<https://vercel.com/satyamapoorva06-blips-projects/relay-email-assistant> → **Create Deployment**
-→ pick branch `arena/3ff46f48-email` → **Deploy**. Everything else is already configured
-(Git link, build command `npm run build`, output `client/dist`, install `npm install`,
-env var, Node 22+ runtime for `api/[...slug].js`). Subsequent deploys can be triggered the
-same way or by promoting any preview deployment.
+Deploys: pushes to `arena/3ff46f48-email` do **not** auto-deploy (project has git
+auto-deploy disabled); trigger one with Vercel → Create Deployment → branch
+`arena/3ff46f48-email`, or via the API with the branch HEAD SHA. First deploy on a brand
+new project requires the manual projectSettings step described in the previous revision of
+this section.
 
 Afterwards, verify: `GET /api/health` should report `{"ok":true,"db":"postgres","reachable":true}`.
 If `reachable` is `false`, the pooler shard hostname is off for this project — swap the
@@ -221,8 +226,7 @@ a custom domain.
 `npm install && npm run build && npm start` (Render/Railway/Fly/Docker). The app then uses
 the embedded SQLite file at `data/relay.db` (auto-created and seeded on first boot).
 
-`pglite://memory` as `DATABASE_URL` runs the full app on an in-process WASM Postgres for
-local E2E testing of the Postgres code path (`npm i --no-save @electric-sql/pglite`).
+`pglite://memory` (or `pglite:///tmp/dir`) as `DATABASE_URL` runs the full app on an in-process WASM Postgres for local E2E testing of the Postgres code path (`@electric-sql/pglite` is a dev dependency).
 
 ### Redeploying the database
 
