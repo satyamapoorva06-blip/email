@@ -1,5 +1,7 @@
 // Email/conversation routes (assistant workspace + shared read helpers).
 import { Router } from 'express';
+import { sendGmailReply, getGmailAccount, getFreshAccessToken } from '../gmail/sync.js';
+import { gmailApi } from '../gmail/google.js';
 import { all, get, run, nowIso, logActivity } from '../db.js';
 import { authRequired, assistantOnly, scopeClause } from '../auth.js';
 import { classifyConversation, draftReply } from '../ai/classify.js';
@@ -97,6 +99,19 @@ router.get('/:id', assistantOnly, async (req, res) => {
 });
 
 // --- Per-conversation actions ------------------------------------------
+// Best-effort Gmail label sync for real threads (mark read/archive). Failures are logged, never fatal.
+async function gmailLabelsBestEffort(convo, body) {
+  if (!convo.external_id) return;
+  try {
+    const account = await getGmailAccount(convo.client_id);
+    if (!account) return;
+    const access = await getFreshAccessToken(account);
+    await gmailApi.modifyThread(access, convo.external_id, body);
+  } catch (err) {
+    console.error('[gmail] label sync failed:', err.message);
+  }
+}
+
 async function ownedConvo(req, res) {
   const convo = await get('SELECT * FROM conversations WHERE id = ?', req.params.id);
   if (!convo || !req.clientIds.includes(convo.client_id)) { res.status(404).json({ error: 'Conversation not found.' }); return null; }
@@ -105,7 +120,9 @@ async function ownedConvo(req, res) {
 
 router.post('/:id/read', assistantOnly, async (req, res) => {
   const convo = await ownedConvo(req, res); if (!convo) return;
-  await run('UPDATE conversations SET is_read = ? WHERE id = ?', req.body?.read === false ? 0 : 1, convo.id);
+  const markRead = req.body?.read !== false;
+  await run('UPDATE conversations SET is_read = ? WHERE id = ?', markRead ? 1 : 0, convo.id);
+  await gmailLabelsBestEffort(convo, markRead ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] });
   res.json({ ok: true });
 });
 
@@ -119,6 +136,7 @@ router.post('/:id/archive', assistantOnly, async (req, res) => {
   const convo = await ownedConvo(req, res); if (!convo) return;
   const unarchive = req.body?.undo === true;
   await run('UPDATE conversations SET status = ? WHERE id = ?', unarchive ? 'open' : 'archived', convo.id);
+  await gmailLabelsBestEffort(convo, unarchive ? { addLabelIds: ['INBOX'] } : { removeLabelIds: ['INBOX'] });
   await logActivity(convo.client_id, 'assistant', unarchive ? 'unarchived' : 'archived', `“${convo.subject}” ${unarchive ? 'moved back to inbox' : 'archived'}.`);
   res.json({ ok: true });
 });
@@ -204,13 +222,31 @@ router.post('/:id/reply', assistantOnly, async (req, res) => {
   if (body.length < 2) return res.status(400).json({ error: 'Write a message first.' });
   if (body.length > 20000) return res.status(400).json({ error: 'Message is too long.' });
   const client = await get('SELECT * FROM clients WHERE id = ?', convo.client_id);
-  const account = await get(`SELECT email FROM connected_accounts WHERE client_id = ? ORDER BY id ASC LIMIT 1`, convo.client_id);
+  const account = await get(`SELECT email, mode FROM connected_accounts WHERE client_id = ? ORDER BY CASE WHEN mode = 'real' THEN 0 ELSE 1 END, id ASC LIMIT 1`, convo.client_id);
   const ts = nowIso();
-  await run(`INSERT INTO messages (conversation_id, sender_name, sender_email, body, direction, created_at) VALUES (?,?,?,?,?,?)`,
+  const insert = await run(`INSERT INTO messages (conversation_id, sender_name, sender_email, body, direction, created_at) VALUES (?,?,?,?,?,?)`,
     convo.id, `${req.user.name} · Assistant to ${client?.name || 'client'}`, account?.email || client?.email || req.user.email, body, 'outbound', ts);
+  const messageId = Number(insert.lastInsertRowid);
   await run(`UPDATE conversations SET is_read = 1, waiting_since = ?, last_activity_at = ? WHERE id = ?`, ts, ts, convo.id);
-  await logActivity(convo.client_id, 'assistant', 'sent_reply', `${req.user.name} sent a reply on ${client?.name || 'the client'}’s behalf in “${convo.subject}”.`);
-  res.json({ ok: true });
+
+  // Real Gmail thread → the explicitly-clicked Send is the approval gate; deliver via Gmail.
+  if (convo.external_id) {
+    try {
+      const inbound = await all(`SELECT sender_email FROM messages WHERE conversation_id = ? AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`, convo.id);
+      const to = inbound[0]?.sender_email;
+      if (!to) throw new Error('No inbound recipient found in this thread.');
+      const result = await sendGmailReply({ clientId: convo.client_id, threadExternalId: convo.external_id, to, subject: convo.subject, body, ownEmail: account?.email });
+      if (result.gmailMessageId) await run('UPDATE messages SET external_id = ? WHERE id = ?', result.gmailMessageId, messageId);
+      await logActivity(convo.client_id, 'assistant', 'sent_reply', `${req.user.name} sent a reply via Gmail on ${client?.name || 'the client'}’s behalf in “${convo.subject}”.`);
+      return res.json({ ok: true, delivered: 'gmail' });
+    } catch (err) {
+      // The draft IS saved in Relay; say plainly that delivery failed — never fake it.
+      await logActivity(convo.client_id, 'assistant', 'gmail_send_failed', `Reply to “${convo.subject}” saved in Relay but Gmail delivery failed: ${err.message}`);
+      return res.status(502).json({ error: `Reply saved in Relay, but sending via Gmail failed: ${err.message}`, saved: true });
+    }
+  }
+  await logActivity(convo.client_id, 'assistant', 'sent_reply', `${req.user.name} sent a reply on ${client?.name || 'the client'}’s behalf in “${convo.subject}” (simulated send).`);
+  res.json({ ok: true, delivered: 'simulated' });
 });
 
 // Try to extract a meeting from the conversation (LLM when available, regex otherwise)

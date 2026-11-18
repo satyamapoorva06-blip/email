@@ -113,6 +113,7 @@ export default function EmailDetail() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[18px] sm:text-[20px] font-bold tracking-tight text-ink leading-snug">{c.subject}</h1>
             <StatusBadge status={c.status} />
+            {c.external_id && <span className="chip bg-[#EFF6FF] text-[#1D4ED8] ring-1 ring-inset ring-[#BFDBFE]" title="Live thread imported from the connected Gmail mailbox">Gmail</span>}
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-ink-muted">
             <Avatar name={client?.name} color={client?.avatar_color} size={18} />

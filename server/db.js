@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS connected_accounts (
   status TEXT DEFAULT 'connected',
   mode TEXT DEFAULT 'simulated',
   last_synced_at TEXT,
+  access_token_enc TEXT,
+  refresh_token_enc TEXT,
+  token_expiry TEXT,
+  scope TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS conversations (
@@ -76,6 +80,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   approval_status TEXT NOT NULL DEFAULT 'none',
   approval_note TEXT,
   waiting_since TEXT,
+  external_id TEXT,
   last_activity_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -86,6 +91,7 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_email TEXT NOT NULL,
   body TEXT NOT NULL,
   direction TEXT NOT NULL,
+  external_id TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS attachments (
@@ -139,6 +145,8 @@ const SQLITE_INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_conversations_client ON conversations(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_activity_client ON activity_log(client_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_conversations_external ON conversations(client_id, external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_external ON messages(conversation_id, external_id) WHERE external_id IS NOT NULL;
 `;
 
 // SQLite → Postgres DDL translation (kept next to the SQLite DDL on purpose).
@@ -192,6 +200,29 @@ function isInsert(sql) {
   return /^\s*insert\s+into\s+([a-z_][a-z0-9_]*)/i.exec(sql);
 }
 
+// Columns added after the initial release — brought up guarded so existing
+// databases (dev SQLite, hosted Postgres) gain them without a full rebuild.
+const ADDED_COLUMNS = [
+  ['connected_accounts', 'access_token_enc', 'TEXT'],
+  ['connected_accounts', 'refresh_token_enc', 'TEXT'],
+  ['connected_accounts', 'token_expiry', 'TEXT'],
+  ['connected_accounts', 'scope', 'TEXT'],
+  ['conversations', 'external_id', 'TEXT'],
+  ['messages', 'external_id', 'TEXT'],
+];
+
+async function ensureColumnsSqlite(db) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+async function ensureColumnsPg(sql) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    await sql.unsafe(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`);
+  }
+}
+
 async function makeSqliteBackend() {
   const { DatabaseSync } = await import('node:sqlite');
   const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -200,6 +231,7 @@ async function makeSqliteBackend() {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(TABLES);
+  ensureColumnsSqlite(db);
   db.exec(SQLITE_INDEXES);
   return {
     all: async (sql, params) => db.prepare(sql).all(...params),
@@ -212,6 +244,25 @@ async function makeSqliteBackend() {
   };
 }
 
+// Reference to the live pg pool (set in makePostgresBackend) so the Gmail
+// routes can idempotently bring up pre-Gmail columns — lazily, memoized,
+// never at module import.
+let _pgSql = null;
+let _pgColumnsReady = null;
+
+/** Idempotent bring-up for pre-Gmail Postgres databases. Safe to call from
+ *  Gmail routes; no-ops on SQLite (handled at backend init) and pglite (fresh DDL). */
+export function ensureGmailColumns() {
+  if (!HAS_PG()) return Promise.resolve(true);
+  if (!_pgColumnsReady) {
+    _pgColumnsReady = ensureColumnsPg(_pgSql)
+      .then(() => true)
+      .catch((err) => { console.error('[db] Gmail column bring-up failed:', err.message); return false; });
+  }
+  return _pgColumnsReady;
+}
+const HAS_PG = () => Boolean(_pgSql);
+
 async function makePostgresBackend(url) {
   const { default: postgres } = await import('postgres');
   // NOTE: no I/O here. The constructor is lazy, and schema DDL must never run
@@ -223,6 +274,10 @@ async function makePostgresBackend(url) {
   // query forever. Bound every query, reap short-idle connections, and cap
   // connection lifetime so half-open sockets are recycled instead of reused.
   const sql = postgres(url, { prepare: false, max: 3, connect_timeout: 15, idle_timeout: 10, max_lifetime: 120, query_timeout: 10 });
+  _pgSql = sql;
+  // NOTE: no DDL on import (a cold-start failure must not take down every
+  // route). Pre-Gmail databases get the new columns via the `relay_gmail`
+  // migration; dev SQLite runs ensureColumnsSqlite at backend init.
   const query = async (text, params) => sql.unsafe(translate(text), params ?? []);
   return {
     all: async (text, params) => normalize([...(await query(text, params))]),

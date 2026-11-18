@@ -28,9 +28,10 @@ Open **http://localhost:3001** and sign in with a demo account (all passwords `d
 | Assistant| `priya@relay.app`              | Full triage workspace   |
 | Client   | `rahul@meridianventures.com`   | Client decisions only   |
 | Client   | `anita@loomandco.com`          | Client decisions only   |
+| Client   | `amansatyam408@gmail.com`      | Client decisions only — primary personal demo client |
 
 The SQLite database is created and seeded automatically on first boot
-(2 clients, 24 conversations, meetings, activity history, notifications).
+(3 clients, sample conversations, meetings, activity history, notifications).
 To rebuild demo data at any time: `npm run seed`.
 
 ### Development mode
@@ -42,10 +43,13 @@ npm run dev:client   # Vite dev server on :5173 with /api proxy → :3001
 
 ### Demo-data caveats
 
-- Gmail/Outlook connects are **simulated** (no real provider credentials are
-  configured) and are labelled "Simulated" everywhere in the UI.
-- All “send” buttons **simulate sending** — messages are stored and threaded,
-  but no email leaves the system.
+- Gmail/Outlook connects are **simulated** until you configure provider OAuth
+  (see *Gmail OAuth setup* below). When `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+  are set, “Connect Gmail” runs the real Google OAuth 2.0 flow and inbox threads
+  sync into Relay; without them, connections stay labelled "Simulated".
+- "Send" buttons simulate sending only for **simulated** threads. Replies on
+  **real Gmail threads** are delivered through the Gmail API and only ever on
+  an explicit user click — nothing is sent without approval.
 - AI classification runs on a transparent **rule-based fallback engine** by
   default (see below). Set `OPENAI_API_KEY` to switch to a real LLM.
 
@@ -178,13 +182,25 @@ Copy `.env.example` → `.env`. Everything is optional:
 | `OPENAI_API_KEY`   | Enables real LLM classification, drafts, chat        | Transparent rule-based engine     |
 | `OPENAI_BASE_URL`  | Any OpenAI-compatible endpoint                       | api.openai.com                    |
 | `OPENAI_MODEL`     | Model name                                          | gpt-4o-mini                       |
-| `GOOGLE_CLIENT_ID` / `MICROSOFT_CLIENT_ID` | Real OAuth for Gmail/Outlook     | Connections stay labelled simulated |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Real Gmail OAuth 2.0            | Gmail connects stay labelled simulated |
+| `GMAIL_TOKEN_SECRET` | AES-256-GCM key for stored OAuth tokens (required in prod) | Server refuses to store tokens |
+| `GMAIL_REDIRECT_URI` | Explicit OAuth redirect override  | Defaults to `<origin>/api/gmail/callback` |
+| `MICROSOFT_CLIENT_ID` | Outlook OAuth (not yet implemented) | Outlook stays simulated |
 
-Going to real OAuth: register an OAuth client with Google/Microsoft, set the
-env vars, and replace the simulated consent in `AssistantConnect.jsx` /
-`ConnectedAccounts.jsx` with the provider’s standard auth-code flow — the rest
-of the app (tokens at rest, sync bookkeeping) already stores against accounts
-with `mode='real'`.
+## Gmail OAuth setup (real inbox)
+
+1. Google Cloud Console → create/select a project → **APIs & Services → Library** → enable **Gmail API**.
+2. **OAuth consent screen**: External. Add scopes `gmail.readonly`, `gmail.modify`, `gmail.send` (all Restricted; for personal use keep the app in *Testing* and add your address as a **test user** — no Google verification needed for ≤100 test users).
+3. **Credentials → Create credentials → OAuth client ID → Web application.** Authorized redirect URIs:
+   - `http://localhost:3001/api/gmail/callback`
+   - `https://relay-email-assistant.vercel.app/api/gmail/callback` (and your project alias if you use it)
+4. Set on Vercel (Project → Settings → Environment Variables, **server-side only**, never `VITE_*`):
+   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_TOKEN_SECRET` (`openssl rand -hex 32`), and optionally `GMAIL_REDIRECT_URI` (recommended: the exact public callback URL).
+   For local dev, put the same in `.env`.
+5. Redeploy. Open **Connected Accounts** → pick Aman Satyam → **Connect Gmail** → authorize. Tokens are stored AES-256-GCM-encrypted in Postgres; the browser never sees them. **Disconnect** revokes them at Google and deletes the stored copy.
+6. Real threads import into the client's workspace labelled with your Gmail threading, classified by the configured AI engine (fallback rules without a key). Mark-read/archive sync back to Gmail; replies deliver via Gmail only on explicit Send.
+
+Outlook remains simulated — the Outlook OAuth flow is not implemented.
 
 ## Deployment
 

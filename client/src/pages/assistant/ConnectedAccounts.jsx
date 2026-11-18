@@ -1,6 +1,7 @@
 // Connected accounts — clearly labelled simulated demo connections by default.
 import { useCallback, useEffect, useState } from 'react';
-import { Plug2, Check, RefreshCw, Trash2, Info, Link2, Mail } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Plug2, Check, RefreshCw, Trash2, Info, Link2, Mail, ShieldCheck } from 'lucide-react';
 import api from '../../api';
 import { useToast } from '../../context.jsx';
 import { Modal, ConfirmModal } from '../../components/Modal';
@@ -22,6 +23,17 @@ export default function ConnectedAccounts() {
   const [modal, setModal] = useState(null); // { provider, clientId } or null
   const [email, setEmail] = useState('');
   const [disconnecting, setDisconnecting] = useState(null);
+  const [gmailStatus, setGmailStatus] = useState({}); // clientId -> status payload
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Surface the OAuth redirect outcome (?gmail=connected|error) exactly once.
+  useEffect(() => {
+    const g = searchParams.get('gmail');
+    if (!g) return;
+    if (g === 'connected') toast('Gmail connected — real mailbox linked. Use “Sync now” to import threads.');
+    else toast(`Gmail connection failed${searchParams.get('reason') ? ` (${searchParams.get('reason')})` : ''}. Nothing was stored.`, 'error');
+    searchParams.delete('gmail'); searchParams.delete('reason'); setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, toast]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -29,13 +41,26 @@ export default function ConnectedAccounts() {
       const [a, c] = await Promise.all([api.get('/api/accounts'), api.get('/api/clients')]);
       setAccounts(a.data.accounts);
       setClients(c.data.clients);
+      const statuses = await Promise.all(
+        c.data.clients.map((cl) => api.get('/api/gmail/status', { params: { clientId: cl.id } }).then((r) => [cl.id, r.data]).catch(() => [cl.id, null]))
+      );
+      setGmailStatus(Object.fromEntries(statuses));
     } catch (err) { toast(err.message, 'error'); } finally { setLoading(false); }
   }, [toast]);
   useEffect(() => { load(); }, [load]);
 
-  const sync = async (id) => {
-    setSyncing(id);
-    try { await api.post(`/api/accounts/${id}/sync`); toast('Mailbox synced (simulated).'); await load(); } catch (err) { toast(err.message, 'error'); } finally { setSyncing(null); }
+  const sync = async (account) => {
+    setSyncing(account.id);
+    try {
+      if (account.mode === 'real') {
+        const { data } = await api.post('/api/gmail/sync', { clientId: account.client_id, force: true });
+        toast(`Gmail sync complete — ${data.imported ?? 0} new, ${data.updated ?? 0} updated.`);
+      } else {
+        await api.post(`/api/accounts/${account.id}/sync`);
+        toast('Mailbox synced (simulated).');
+      }
+      await load();
+    } catch (err) { toast(err.message, 'error'); load(); } finally { setSyncing(null); }
   };
 
   const connect = async (e) => {
@@ -49,8 +74,24 @@ export default function ConnectedAccounts() {
     } catch (err) { toast(err.message, 'error'); }
   };
 
+  const connectWithGoogle = async () => {
+    try {
+      const { data } = await api.post('/api/gmail/connect', { clientId: modal.clientId });
+      window.location.assign(data.url);
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
   const disconnect = async () => {
-    try { await api.delete(`/api/accounts/${disconnecting.id}`); toast('Mailbox disconnected.'); load(); } catch (err) { toast(err.message, 'error'); }
+    try {
+      if (disconnecting.mode === 'real') {
+        await api.post('/api/gmail/disconnect', { clientId: disconnecting.client_id });
+        toast('Gmail disconnected — tokens revoked and deleted.');
+      } else {
+        await api.delete(`/api/accounts/${disconnecting.id}`);
+        toast('Mailbox disconnected.');
+      }
+      load();
+    } catch (err) { toast(err.message, 'error'); }
     setDisconnecting(null);
   };
 
@@ -63,7 +104,7 @@ export default function ConnectedAccounts() {
 
       <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-4 py-3 text-[11.5px] leading-snug text-[#92400E]">
         <Info size={15} className="shrink-0 mt-0.5" />
-        <span><strong>Simulated mode.</strong> No Google/Microsoft credentials are configured in this environment, so every connection below is a realistic demo — labelled <em>Simulated</em> — and no real mail is accessed. To go live, set <code className="font-mono text-[10px] bg-white/70 px-1 rounded">GOOGLE_CLIENT_ID</code> / <code className="font-mono text-[10px] bg-white/70 px-1 rounded">MICROSOFT_CLIENT_ID</code> and reconnect (see README).</span>
+        <span><strong>Two modes.</strong> If <code className="font-mono text-[10px] bg-white/70 px-1 rounded">GOOGLE_CLIENT_ID</code> / <code className="font-mono text-[10px] bg-white/70 px-1 rounded">GOOGLE_CLIENT_SECRET</code> are set, “Connect Gmail” runs the real Google OAuth flow — tokens are stored encrypted on the server and revocable anytime. Without them, connections are clearly labelled <em>Simulated</em> demos and no real mail is accessed. See README → Gmail OAuth.</span>
       </div>
 
       <div className="mt-5 space-y-4">
@@ -81,14 +122,16 @@ export default function ConnectedAccounts() {
             <div className="divide-y divide-hairline">
               {list.length === 0 && <p className="px-5 py-4 text-[12px] text-ink-muted">No mailboxes connected for {client.name.split(' ')[0]} yet.</p>}
               {list.map((a) => (
-                <div key={a.id} className="flex items-center gap-3 px-4 sm:px-5 py-3.5">
+                <div key={a.id} className="flex items-center gap-3 px-4 sm:px-5 py-3.5" data-mode={a.mode}>
                   <span className="w-9 h-9 rounded-lg bg-[#F4F4F7] flex items-center justify-center shrink-0">{providerMark(a.provider)}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-[12px] font-semibold text-ink truncate">{a.email}</p>
                     <p className="text-[10px] text-ink-muted">{a.provider === 'gmail' ? 'Gmail' : 'Outlook'} · last synced {a.last_synced_at ? timeAgo(a.last_synced_at) : 'never'} · {a.status}</p>
                   </div>
-                  <span className="chip bg-[#FFFBEB] text-[#92400E] ring-1 ring-inset ring-[#FDE68A] shrink-0"><Check size={9} strokeWidth={3} /> Simulated</span>
-                  <button className="btn-icon" title="Sync now" aria-label="Sync now" onClick={() => sync(a.id)} disabled={syncing === a.id}>
+                  {a.mode === 'real'
+                    ? <span className="chip bg-[#ECFDF5] text-[#047857] ring-1 ring-inset ring-[#A7F3D0] shrink-0"><ShieldCheck size={9} strokeWidth={3} /> Real Gmail</span>
+                    : <span className="chip bg-[#FFFBEB] text-[#92400E] ring-1 ring-inset ring-[#FDE68A] shrink-0"><Check size={9} strokeWidth={3} /> Simulated</span>}
+                  <button className="btn-icon" title="Sync now" aria-label="Sync now" onClick={() => sync(a)} disabled={syncing === a.id}>
                     <RefreshCw size={15} className={syncing === a.id ? 'animate-spin' : ''} />
                   </button>
                   <button className="btn-icon hover:!text-[#B42318]" title="Disconnect" aria-label="Disconnect" onClick={() => setDisconnecting(a)}><Trash2 size={15} /></button>
@@ -100,8 +143,21 @@ export default function ConnectedAccounts() {
       </div>
 
       {/* Connect modal */}
-      <Modal open={!!modal} onClose={() => setModal(null)} title="Connect a mailbox — demo mode">
-        {modal && (
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.provider === 'gmail' && gmailStatus[modal?.clientId]?.configured ? 'Connect Gmail — real OAuth' : 'Connect a mailbox — demo mode'}>
+        {modal && modal.provider === 'gmail' && gmailStatus[modal.clientId]?.configured && (
+          <div className="space-y-4">
+            <p className="text-[12.5px] text-ink-secondary leading-relaxed">You’ll be sent to Google to authorise Relay. Requested scopes, exactly:</p>
+            <ul className="text-[11.5px] text-ink-secondary space-y-1.5 list-disc pl-5">
+              <li><code className="font-mono text-[10px]">gmail.readonly</code> — read inbox threads so they can be triaged</li>
+              <li><code className="font-mono text-[10px]">gmail.modify</code> — reflect mark-read/archive back to Gmail</li>
+              <li><code className="font-mono text-[10px]">gmail.send</code> — send replies you explicitly approve</li>
+            </ul>
+            <p className="text-[10.5px] text-ink-muted">Tokens are stored encrypted on the server (AES-256-GCM) and never shown to the browser. You can disconnect — revoking access — at any time.</p>
+            {!gmailStatus[modal.clientId]?.keyConfigured && <p className="text-[10.5px] text-[#B42318] bg-[#FEF2F2] border border-[#FECACA] rounded-lg px-3 py-2">GMAIL_TOKEN_SECRET is not set on this deployment — the server will refuse to store tokens.</p>}
+            <div className="flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={() => setModal(null)}>Cancel</button><button type="button" className="btn-primary" onClick={connectWithGoogle}><ShieldCheck size={14} /> Continue with Google</button></div>
+          </div>
+        )}
+        {modal && !(modal.provider === 'gmail' && gmailStatus[modal.clientId]?.configured) && (
           <form onSubmit={connect} className="space-y-4">
             <div className="grid grid-cols-2 gap-2">
               {['gmail', 'outlook'].map((p) => (
@@ -112,7 +168,7 @@ export default function ConnectedAccounts() {
               ))}
             </div>
             <div><label className="label" htmlFor="acct-email">Mailbox address</label><input id="acct-email" autoFocus type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="client@company.com" className="input" /></div>
-            <p className="text-[10px] text-[#B45309] flex items-center gap-1.5"><Info size={11} /> Simulated connection — no real credentials are used or stored.</p>
+            <p className="text-[10px] text-[#B45309] flex items-center gap-1.5"><Info size={11} /> Simulated connection — no real credentials are used or stored.{modal.provider === 'gmail' && ' (Real Google sign-in appears here automatically once GOOGLE_CLIENT_ID/SECRET are set.)'}</p>
             <div className="flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={() => setModal(null)}>Cancel</button><button type="submit" className="btn-primary"><Link2 size={14} /> Connect (simulated)</button></div>
           </form>
         )}

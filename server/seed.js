@@ -34,9 +34,15 @@ const anita = await run('INSERT INTO users (name, email, password_hash, role, av
   'Anita Desai', 'anita@loomandco.com', hashPassword('demo1234'), 'client', '#B45309', nowIso());
 const anitaId = Number(anita.lastInsertRowid);
 
+// Primary personal client account (task: make this the demo client).
+const aman = await run('INSERT INTO users (name, email, password_hash, role, avatar_color, created_at) VALUES (?,?,?,?,?,?)',
+  'Aman Satyam', 'amansatyam408@gmail.com', hashPassword('demo1234'), 'client', '#6D28D9', nowIso());
+const amanId = Number(aman.lastInsertRowid);
+
 await run('INSERT INTO settings (user_id, signature, timezone) VALUES (?,?,?)', priyaId, 'Warm regards,\nPriya Sharma\nExecutive Personal Assistant to Rahul & Anita', 'Asia/Kolkata');
 await run('INSERT INTO settings (user_id) VALUES (?)', rahulId);
 await run('INSERT INTO settings (user_id) VALUES (?)', anitaId);
+await run('INSERT INTO settings (user_id) VALUES (?)', amanId);
 
 // ---------------------------------------------------------------- clients
 const meridian = await run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
@@ -46,6 +52,10 @@ const meridianId = Number(meridian.lastInsertRowid);
 const loom = await run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
   priyaId, anitaId, 'Anita Desai', 'Loom & Co.', 'anita@loomandco.com', 'Founder & CEO', '#B45309', nowIso());
 const loomId = Number(loom.lastInsertRowid);
+
+const satyam = await run('INSERT INTO clients (assistant_id, user_id, name, company, email, role_title, avatar_color, created_at) VALUES (?,?,?,?,?,?,?,?)',
+  priyaId, amanId, 'Aman Satyam', 'Personal', 'amansatyam408@gmail.com', 'Principal', '#6D28D9', nowIso());
+const satyamId = Number(satyam.lastInsertRowid);
 
 // ----------------------------------------------------- connected accounts (simulated)
 const acct = async (clientId, provider, email, syncedHoursAgo) =>
@@ -64,7 +74,7 @@ async function addConversation(c) {
     (client_id, subject, classification, confidence, summary, reason, suggested_action, needs_review,
      status, is_read, is_starred, importance, approval_status, approval_note, waiting_since, last_activity_at, created_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    c.client === 'meridian' ? meridianId : loomId,
+    c.client === 'meridian' ? meridianId : c.client === 'satyam' ? satyamId : loomId,
     c.subject,
     c.classification, c.confidence, c.summary, c.reason, c.suggested_action,
     c.needs_review ? 1 : 0,
@@ -83,6 +93,66 @@ async function addConversation(c) {
   }
   return convoId;
 }
+
+console.log('[seed] inserting Aman-demo conversations…');
+
+await addConversation({
+  client: 'satyam', created_hours_ago: 5,
+  subject: '[Demo] Q4 tax documents — accountant needs them by Friday',
+  classification: 'client', confidence: 0.82, is_read: false, importance: 'high', approval_status: 'pending',
+  summary: '[Demo] Your accountant wants the Q4 investment proofs and bank statements by Friday to file your returns on time.',
+  reason: 'Sharing personal financial documents requires your explicit go-ahead — the assistant must not send them unapproved.',
+  suggested_action: 'Confirm you want the documents to be collected and shared, or tell the accountant you will deliver them yourself.',
+  messages: [
+    { dir: 'inbound', hours_ago: 5, from: ['CA Rohan Verma', 'rohan.verma@vermatax.in'], body: `Aman — your Q4 proofs and statements are pending for filing. Please confirm if I should request the consolidated statement from ICICI, or will you share everything on one mail?
+
+Rohan` },
+  ],
+});
+
+await addConversation({
+  client: 'satyam', created_hours_ago: 9,
+  subject: '[Demo] Apartment society — plumbing approval',
+  classification: 'client', confidence: 0.78, is_read: false, importance: 'normal',
+  summary: '[Demo] The society committee asks for your approval to replace the 2nd-floor plumbing riser; your flat is affected for one day.',
+  reason: 'Approval affecting your apartment — your decision, not the assistant’s.',
+  suggested_action: 'Approve the works (they will schedule the shutoff) or defer to next month.',
+  messages: [
+    { dir: 'inbound', hours_ago: 9, from: ['Society Office', 'secretary@greenparksociety.in'], body: `Dear Mr Satyam,
+
+We plan to replace the second-floor riser on 22 Nov, 9am–6pm. Water will be shut off during that window. Please confirm acceptance for your flat.
+
+Secretary` },
+  ],
+});
+
+await addConversation({
+  client: 'satyam', created_hours_ago: 14,
+  subject: '[Demo] Flight BOM→DEL 29 Nov — 6:10 am, seat 4A',
+  classification: 'assistant', confidence: 0.9, is_read: false, importance: 'normal',
+  summary: '[Demo] Yatra needs confirmation on the 6:10 am seat and your lounge preference before 6 pm to hold the fare.',
+  reason: 'Travel booking logistics — your assistant can complete this once you confirm two preferences.',
+  suggested_action: 'Confirm aisle seat + lounge access; the assistant will finish the booking.',
+  messages: [
+    { dir: 'inbound', hours_ago: 14, from: ['Yatra Travel Desk', 'support@yatratravel.in'], body: `Aman — for 29 Nov BOM→DEL: seat 4A (aisle) is held until 6pm; fare ₹8,940. Add lounge access (+₹1,400)?
+
+Account manager, Yatra` },
+  ],
+});
+
+await addConversation({
+  client: 'satyam', created_hours_ago: 26,
+  subject: '[Demo] CRED — November bill paid, ₹4,236',
+  classification: 'none', confidence: 0.97, is_read: true, importance: 'low',
+  summary: '[Demo] Automated receipt: your credit-card bill payment went through.',
+  reason: 'Automated payment notification — no reply needed.',
+  suggested_action: 'No action; keep for records.',
+  messages: [
+    { dir: 'inbound', hours_ago: 26, from: ['CRED', 'noreply@cred.club'], body: `Your HDFC credit-card bill of ₹4,236 was paid on time via CRED. Thank you!
+
+This is an automated message.` },
+  ],
+});
 
 console.log('[seed] inserting demo conversations…');
 

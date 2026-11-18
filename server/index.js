@@ -28,6 +28,7 @@ const { default: clientsRoutes } = await import('./routes/clients.js');
 const { default: overviewRoutes } = await import('./routes/overview.js');
 const { default: opsRoutes } = await import('./routes/ops.js');
 const { default: aiRoutes } = await import('./routes/ai.js');
+const { default: gmailRoutes } = await import('./routes/gmail.js');
 
 const app = express();
 app.disable('x-powered-by');
@@ -56,6 +57,7 @@ app.use('/api/clients', clientsRoutes);
 app.use('/api', overviewRoutes);   // /api/stats, /api/activity, /api/meetings
 app.use('/api', opsRoutes);        // /api/accounts, /api/settings, /api/notifications
 app.use('/api/ai', aiRoutes);
+app.use('/api/gmail', gmailRoutes);
 
 // Static frontend (built via `npm run build`) — self-hosted serving; on Vercel
 // the static files are served by the platform and only /api hits this app.

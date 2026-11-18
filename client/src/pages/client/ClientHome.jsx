@@ -1,13 +1,14 @@
 // Client home — deliberately sparse. Only what needs THE client.
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Sparkles, ShieldQuestion, Flag, CircleCheck, CornerUpLeft, Check, X, ArrowRight, Inbox } from 'lucide-react';
+import { Sparkles, ShieldQuestion, Flag, CircleCheck, CornerUpLeft, Check, X, ArrowRight, Inbox, Plug2, RefreshCw } from 'lucide-react';
 import api from '../../api';
 import { useToast } from '../../context.jsx';
 import ClientShell from '../../components/ClientShell';
 import Avatar from '../../components/Avatar';
 import EmptyState from '../../components/EmptyState';
 import { greeting, timeAgo } from '../../utils';
+import { useSearchParams } from 'react-router-dom';
 
 function DecisionCard({ item, assistantFirst, onUpdate }) {
   const navigate = useNavigate();
@@ -86,6 +87,8 @@ export default function ClientHome() {
   const [overview, setOverview] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [gmail, setGmail] = useState(null); // { configured, connected, syncing, last_synced_at }
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const load = async () => {
     setLoading(true);
@@ -95,7 +98,45 @@ export default function ClientHome() {
       setItems(data.attention);
     } catch (err) { toast(err.message, 'error'); } finally { setLoading(false); }
   };
+
+  // Gmail: surface OAuth outcome once; auto-sync silently when connected.
+  useEffect(() => {
+    const g = searchParams.get('gmail');
+    if (g) {
+      if (g === 'connected') toast('Gmail connected — your real inbox will sync here.');
+      else toast(`Gmail connection failed${searchParams.get('reason') ? ` (${searchParams.get('reason')})` : ''}. Nothing was stored.`, 'error');
+      searchParams.delete('gmail'); searchParams.delete('reason'); setSearchParams(searchParams, { replace: true });
+    }
+    api.get('/api/gmail/status').then(async ({ data }) => {
+      setGmail({ ...data, syncing: false });
+      if (data.connected) {
+        try {
+          const { data: sync } = await api.post('/api/gmail/sync', {});
+          if (sync.imported > 0) { toast(`${sync.imported} new email${sync.imported === 1 ? '' : 's'} imported from Gmail.`); await load(); }
+          setGmail((p) => ({ ...p, last_synced_at: new Date().toISOString() }));
+        } catch { /* background sync is best-effort */ }
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line
+  }, []);
   useEffect(() => { load(); }, []); // eslint-disable-line
+
+  const connectGmail = async () => {
+    try {
+      const { data } = await api.post('/api/gmail/connect', {});
+      window.location.assign(data.url);
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  const syncNow = async () => {
+    setGmail((p) => ({ ...p, syncing: true }));
+    try {
+      const { data } = await api.post('/api/gmail/sync', { force: true });
+      toast(`Gmail synced — ${data.imported ?? 0} new, ${data.updated ?? 0} updated.`);
+      setGmail((p) => ({ ...p, syncing: false, last_synced_at: new Date().toISOString() }));
+      await load();
+    } catch (err) { toast(err.message, 'error'); setGmail((p) => ({ ...p, syncing: false })); }
+  };
 
   const updateItem = (id, patch) => {
     setItems((list) => patch.__remove ? list.filter((i) => i.id !== id) : list.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -123,6 +164,25 @@ export default function ClientHome() {
         <h1 className="mt-1 text-[26px] sm:text-[30px] font-bold tracking-[-0.02em] text-ink">{greeting()}, {firstName}</h1>
         <p className="mt-1 text-[13px] text-ink-secondary">{items.length === 0 ? 'Nothing needs your decision right now.' : <>There {items.length === 1 ? 'is' : 'are'} <strong className="text-ink">{items.length}</strong> thing{items.length === 1 ? '' : 's'} waiting for your decision. Nothing else reaches you.</>}</p>
       </div>
+
+      {gmail && !gmail.connected && (
+        <div className="mt-5 flex items-start gap-2.5 rounded-xl border border-[#C7D2FE] bg-[#EEF2FF] px-4 py-3 text-[11.5px] leading-snug text-[#3730A3]">
+          <Plug2 size={15} className="shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            {gmail.configured
+              ? <><strong>Your real Gmail isn’t connected yet.</strong> Connect it to see your actual inbox here. <button className="font-semibold underline underline-offset-2" onClick={connectGmail}>Connect Gmail</button></>
+              : <><strong>Demo data shown.</strong> Gmail OAuth isn’t configured on this deployment — ask your assistant to set it up (README → Gmail OAuth) to load your real inbox.</>}
+          </div>
+        </div>
+      )}
+      {gmail?.connected && (
+        <div className="mt-5 flex items-center gap-2.5 rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-2.5 text-[11.5px] text-[#047857]">
+          <span className="font-semibold">Gmail connected{gmail.email ? ` — ${gmail.email}` : ''}.</span>
+          <button className="ml-auto inline-flex items-center gap-1.5 font-semibold hover:underline disabled:opacity-60" onClick={syncNow} disabled={gmail.syncing}>
+            <RefreshCw size={12} className={gmail.syncing ? 'animate-spin' : ''} /> {gmail.syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+      )}
 
       <div className="mt-6 space-y-4">
         {items.map((item) => <DecisionCard key={item.id} item={item} assistantFirst={assistantFirst} onUpdate={updateItem} />)}
