@@ -31,7 +31,10 @@ api.interceptors.response.use(
       // HTML error pages (e.g. an SSO wall or platform 500) are not useful — collapse them.
       message = data.trim().startsWith('<') ? `The service returned an unexpected page (HTTP ${status ?? '???'}).` : data.slice(0, 300);
     } else if (err.message) {
-      message = err.message;
+      // Axios timeouts (ECONNABORTED) — say it in human terms, keep the code for debugging.
+      message = err.code === 'ECONNABORTED' || /timeout of \d+ms exceeded/.test(err.message)
+        ? 'The server took too long to respond. Check your connection and try again — if it persists, the database may be asleep.'
+        : err.message;
     }
     return Promise.reject(new Error(message));
   }

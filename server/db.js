@@ -218,7 +218,11 @@ async function makePostgresBackend(url) {
   // at module import — a failed cold-start would take down EVERY route with a
   // platform 500. The schema lives in migrations (see README / Supabase
   // migration `relay_schema`); the pooler is reached lazily on first query.
-  const sql = postgres(url, { prepare: false, max: 3, connect_timeout: 15, idle_timeout: 20 });
+  // Serverless resilience: pooler (transaction mode) drops idle connections
+  // silently; a lambda thawed after a freeze can hold a dead socket and hang a
+  // query forever. Bound every query, reap short-idle connections, and cap
+  // connection lifetime so half-open sockets are recycled instead of reused.
+  const sql = postgres(url, { prepare: false, max: 3, connect_timeout: 15, idle_timeout: 10, max_lifetime: 120, query_timeout: 10 });
   const query = async (text, params) => sql.unsafe(translate(text), params ?? []);
   return {
     all: async (text, params) => normalize([...(await query(text, params))]),
